@@ -1,4 +1,6 @@
-const API_BASE_URL = 'http://localhost:50001/api';
+const API_BASE_URL = process.env.NODE_ENV === 'production'
+  ? '/api'
+  : 'http://localhost:5000/api';  // Changed from 50001 to 5000 to match server port
 
 export const API_ENDPOINTS = {
   // Auth endpoints
@@ -15,6 +17,7 @@ export const API_ENDPOINTS = {
   USER_STORIES: (userId) => `${API_BASE_URL}/stories/user/${userId}`,
   LIKE_STORY: (id) => `${API_BASE_URL}/stories/${id}/like`,
   COMMENT_STORY: (id) => `${API_BASE_URL}/stories/${id}/comments`,
+  GENERATE_STORY: `${API_BASE_URL}/stories/generate`, // Added AI story generation endpoint
 };
 
 export const getAuthHeader = () => {

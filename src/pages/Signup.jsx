@@ -8,42 +8,109 @@ import {
   Box,
   Link,
   Alert,
-  CircularProgress
+  CircularProgress,
+  IconButton,
+  InputAdornment,
+  FormHelperText
 } from '@mui/material';
 import { Link as RouterLink } from 'react-router-dom';
+import { Visibility, VisibilityOff } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
 
 const Signup = () => {
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [formData, setFormData] = useState({
     username: '',
     email: '',
     password: '',
     confirmPassword: ''
   });
-  const [validationError, setValidationError] = useState('');
+  const [validationErrors, setValidationErrors] = useState({});
   const { register, error, loading, clearError } = useAuth();
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({
       ...prev,
-      [name]: value
+      [name]: value.trim()
     }));
+    
+    // Clear errors when user types
     if (error) clearError();
-    if (validationError) setValidationError('');
+    if (validationErrors[name]) {
+      setValidationErrors(prev => ({
+        ...prev,
+        [name]: ''
+      }));
+    }
+
+    // Real-time validation
+    if (name === 'password' || name === 'confirmPassword') {
+      if (name === 'password' && value.length > 0 && value.length < 6) {
+        setValidationErrors(prev => ({
+          ...prev,
+          password: 'Password must be at least 6 characters long'
+        }));
+      }
+      if (name === 'confirmPassword' && value !== formData.password) {
+        setValidationErrors(prev => ({
+          ...prev,
+          confirmPassword: 'Passwords do not match'
+        }));
+      }
+    }
+    if (name === 'email' && value) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(value)) {
+        setValidationErrors(prev => ({
+          ...prev,
+          email: 'Please enter a valid email address'
+        }));
+      }
+    }
+    if (name === 'username' && value) {
+      const usernameRegex = /^[a-zA-Z0-9_-]{3,20}$/;
+      if (!usernameRegex.test(value)) {
+        setValidationErrors(prev => ({
+          ...prev,
+          username: 'Username must be 3-20 characters and can only contain letters, numbers, underscores, and hyphens'
+        }));
+      }
+    }
   };
 
   const validateForm = () => {
-    if (formData.password !== formData.confirmPassword) {
-      setValidationError('Passwords do not match');
-      return false;
+    const errors = {};
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const usernameRegex = /^[a-zA-Z0-9_-]{3,20}$/;
+
+    if (!formData.username) {
+      errors.username = 'Username is required';
+    } else if (!usernameRegex.test(formData.username)) {
+      errors.username = 'Username must be 3-20 characters and can only contain letters, numbers, underscores, and hyphens';
     }
-    if (formData.password.length < 6) {
-      setValidationError('Password must be at least 6 characters long');
-      return false;
+
+    if (!formData.email) {
+      errors.email = 'Email is required';
+    } else if (!emailRegex.test(formData.email)) {
+      errors.email = 'Please enter a valid email address';
     }
-    return true;
+
+    if (!formData.password) {
+      errors.password = 'Password is required';
+    } else if (formData.password.length < 6) {
+      errors.password = 'Password must be at least 6 characters long';
+    }
+
+    if (!formData.confirmPassword) {
+      errors.confirmPassword = 'Please confirm your password';
+    } else if (formData.password !== formData.confirmPassword) {
+      errors.confirmPassword = 'Passwords do not match';
+    }
+
+    setValidationErrors(errors);
+    return Object.keys(errors).length === 0;
   };
 
   const handleSubmit = async (e) => {
@@ -60,6 +127,18 @@ const Signup = () => {
       // Error is handled by AuthContext
       console.error('Registration failed:', err);
     }
+  };
+
+  const handleClickShowPassword = (field) => {
+    if (field === 'password') {
+      setShowPassword(!showPassword);
+    } else {
+      setShowConfirmPassword(!showConfirmPassword);
+    }
+  };
+
+  const handleMouseDownPassword = (e) => {
+    e.preventDefault();
   };
 
   return (
@@ -91,20 +170,17 @@ const Signup = () => {
           Sign Up
         </Typography>
 
-        {(error || validationError) && (
+        {error && (
           <Alert 
             severity="error" 
             sx={{ mb: 3 }}
-            onClose={() => {
-              clearError();
-              setValidationError('');
-            }}
+            onClose={clearError}
           >
-            {error || validationError}
+            {error}
           </Alert>
         )}
 
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} noValidate>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
             <TextField
               label="Username"
@@ -115,6 +191,12 @@ const Signup = () => {
               fullWidth
               autoComplete="username"
               disabled={loading}
+              error={!!validationErrors.username}
+              helperText={validationErrors.username}
+              inputProps={{
+                'aria-label': 'Username',
+                maxLength: 20
+              }}
             />
 
             <TextField
@@ -127,18 +209,13 @@ const Signup = () => {
               fullWidth
               autoComplete="email"
               disabled={loading}
+              error={!!validationErrors.email}
+              helperText={validationErrors.email}
+              inputProps={{
+                'aria-label': 'Email address'
+              }}
             />
 
-            <Box sx={{ display: 'flex', alignItems: 'center' }}>
-              <input
-                type="checkbox"
-                checked={showPassword}
-                onChange={() => setShowPassword(prev => !prev)}
-              />
-              <Typography variant="body2" sx={{ ml: 1 }}>
-                Show Password
-              </Typography>
-            </Box>
             <TextField
               label="Password"
               type={showPassword ? "text" : "password"}
@@ -149,11 +226,27 @@ const Signup = () => {
               fullWidth
               autoComplete="new-password"
               disabled={loading}
-              helperText="Password must be at least 6 characters long"
+              error={!!validationErrors.password}
+              helperText={validationErrors.password || "Password must be at least 6 characters long"}
+              InputProps={{
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <IconButton
+                      aria-label="toggle password visibility"
+                      onClick={() => handleClickShowPassword('password')}
+                      onMouseDown={handleMouseDownPassword}
+                      edge="end"
+                    >
+                      {showPassword ? <VisibilityOff /> : <Visibility />}
+                    </IconButton>
+                  </InputAdornment>
+                ),
+              }}
             />
+
             <TextField
               label="Confirm Password"
-              type={showPassword ? "text" : "password"}
+              type={showConfirmPassword ? "text" : "password"}
               name="confirmPassword"
               value={formData.confirmPassword}
               onChange={handleInputChange}
@@ -161,6 +254,22 @@ const Signup = () => {
               fullWidth
               autoComplete="new-password"
               disabled={loading}
+              error={!!validationErrors.confirmPassword}
+              helperText={validationErrors.confirmPassword}
+              InputProps={{
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <IconButton
+                      aria-label="toggle confirm password visibility"
+                      onClick={() => handleClickShowPassword('confirm')}
+                      onMouseDown={handleMouseDownPassword}
+                      edge="end"
+                    >
+                      {showConfirmPassword ? <VisibilityOff /> : <Visibility />}
+                    </IconButton>
+                  </InputAdornment>
+                ),
+              }}
             />
 
             <Button

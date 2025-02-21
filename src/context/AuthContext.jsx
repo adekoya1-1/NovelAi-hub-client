@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authService } from '../services/authService';
 
@@ -10,14 +10,48 @@ export const AuthProvider = ({ children }) => {
   const [error, setError] = useState(null);
   const navigate = useNavigate();
 
+  // Verify token and user data on mount
   useEffect(() => {
-    // Check if user is logged in on mount
-    const user = authService.getCurrentUser();
-    if (user) {
-      setCurrentUser(user);
-    }
-    setLoading(false);
+    const verifyAuth = async () => {
+      try {
+        const token = localStorage.getItem('token');
+        const storedUser = localStorage.getItem('user');
+
+        if (token && storedUser) {
+          try {
+            const user = JSON.parse(storedUser);
+            // Verify token is still valid by making a request
+            await authService.getProfile();
+            setCurrentUser(user);
+          } catch (err) {
+            console.error('Invalid stored user data:', err);
+            // Clear invalid auth state
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+          }
+        }
+      } catch (err) {
+        console.error('Auth verification failed:', err);
+        // Clear invalid auth state
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    verifyAuth();
   }, []);
+
+  const handleAuthError = useCallback((error) => {
+    if (error.message.includes('Session expired') || error.message.includes('Invalid token')) {
+      logout();
+      setError('Your session has expired. Please login again.');
+      navigate('/login');
+    } else {
+      setError(error.message);
+    }
+  }, [navigate]);
 
   const register = async (userData) => {
     try {
@@ -28,7 +62,7 @@ export const AuthProvider = ({ children }) => {
       navigate('/');
       return user;
     } catch (err) {
-      setError(err.message);
+      handleAuthError(err);
       throw err;
     } finally {
       setLoading(false);
@@ -44,18 +78,19 @@ export const AuthProvider = ({ children }) => {
       navigate('/');
       return user;
     } catch (err) {
-      setError(err.message);
+      handleAuthError(err);
       throw err;
     } finally {
       setLoading(false);
     }
   };
 
-  const logout = () => {
-    authService.logout();
+  const logout = useCallback(() => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
     setCurrentUser(null);
-    navigate('/login');
-  };
+    setError(null);
+  }, []);
 
   const updateProfile = async (profileData) => {
     try {
@@ -63,17 +98,15 @@ export const AuthProvider = ({ children }) => {
       setLoading(true);
       const updatedUser = await authService.updateProfile(profileData);
       setCurrentUser(updatedUser);
+      // Update stored user data
+      localStorage.setItem('user', JSON.stringify(updatedUser));
       return updatedUser;
     } catch (err) {
-      setError(err.message);
+      handleAuthError(err);
       throw err;
     } finally {
       setLoading(false);
     }
-  };
-
-  const clearError = () => {
-    setError(null);
   };
 
   const updateProfilePicture = async (imageFile) => {
@@ -81,18 +114,31 @@ export const AuthProvider = ({ children }) => {
       setError(null);
       setLoading(true);
       const result = await authService.uploadProfilePicture(imageFile);
-      setCurrentUser(prev => ({
-        ...prev,
+      const updatedUser = {
+        ...currentUser,
         profilePicture: result.profilePicture
-      }));
+      };
+      setCurrentUser(updatedUser);
+      // Update stored user data
+      localStorage.setItem('user', JSON.stringify(updatedUser));
       return result;
     } catch (err) {
-      setError(err.message);
+      handleAuthError(err);
       throw err;
     } finally {
       setLoading(false);
     }
   };
+
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
+
+  const isAuthenticated = useCallback(() => {
+    const token = localStorage.getItem('token');
+    const user = localStorage.getItem('user');
+    return !!(token && user && currentUser);
+  }, [currentUser]);
 
   const value = {
     currentUser,
@@ -104,21 +150,8 @@ export const AuthProvider = ({ children }) => {
     updateProfile,
     updateProfilePicture,
     clearError,
-    isAuthenticated: authService.isAuthenticated
+    isAuthenticated
   };
-
-  if (loading) {
-    return (
-      <div style={{ 
-        display: 'flex', 
-        justifyContent: 'center', 
-        alignItems: 'center', 
-        height: '100vh' 
-      }}>
-        Loading...
-      </div>
-    );
-  }
 
   return (
     <AuthContext.Provider value={value}>

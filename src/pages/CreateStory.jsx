@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import {
   Container,
   Typography,
@@ -15,13 +15,20 @@ import {
   CircularProgress,
   Stepper,
   Step,
-  StepLabel
+  StepLabel,
+  IconButton
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
+import { Close as CloseIcon } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
 import { storyService } from '../services/storyService';
 
 const steps = ['Story Details', 'Generate Story', 'Review & Save'];
+
+const MAX_TITLE_LENGTH = 100;
+const MAX_PROMPT_LENGTH = 1000;
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif'];
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
 
 const CreateStory = () => {
   const [activeStep, setActiveStep] = useState(0);
@@ -29,45 +36,114 @@ const CreateStory = () => {
     title: '',
     genre: '',
     prompt: '',
-    length: 'medium'
+    length: 'medium',
+    image: null
   });
   const [generatedStory, setGeneratedStory] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [validationErrors, setValidationErrors] = useState({});
   const { currentUser } = useAuth();
   const navigate = useNavigate();
 
+  const validateImage = useCallback((file) => {
+    if (file) {
+      if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+        return 'Please upload a valid image file (JPEG, PNG, or GIF)';
+      }
+      if (file.size > MAX_IMAGE_SIZE) {
+        return 'Image size should be less than 5MB';
+      }
+    }
+    return null;
+  }, []);
+
   const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
+    const { name, value, files } = e.target;
+    
+    if (name === 'image') {
+      if (files && files[0]) {
+        const imageError = validateImage(files[0]);
+        if (imageError) {
+          setValidationErrors(prev => ({
+            ...prev,
+            image: imageError
+          }));
+          return;
+        }
+        setFormData(prev => ({
+          ...prev,
+          image: files[0]
+        }));
+        setValidationErrors(prev => ({
+          ...prev,
+          image: null
+        }));
+      }
+    } else {
+      // Trim input and enforce length limits
+      const trimmedValue = value.trim();
+      if (name === 'title' && trimmedValue.length > MAX_TITLE_LENGTH) {
+        return;
+      }
+      if (name === 'prompt' && trimmedValue.length > MAX_PROMPT_LENGTH) {
+        return;
+      }
+      
+      setFormData(prev => ({
+        ...prev,
+        [name]: trimmedValue
+      }));
+      
+      // Clear validation errors for the field
+      if (validationErrors[name]) {
+        setValidationErrors(prev => ({
+          ...prev,
+          [name]: null
+        }));
+      }
+    }
+    
     if (error) setError('');
   };
 
   const validateStep = () => {
+    const errors = {};
+
     switch (activeStep) {
       case 0:
         if (!formData.title.trim()) {
-          setError('Please provide a title');
-          return false;
+          errors.title = 'Please provide a title';
+        } else if (formData.title.length > MAX_TITLE_LENGTH) {
+          errors.title = `Title must be less than ${MAX_TITLE_LENGTH} characters`;
         }
+        
         if (!formData.genre) {
-          setError('Please select a genre');
-          return false;
+          errors.genre = 'Please select a genre';
+        }
+        
+        if (formData.image) {
+          const imageError = validateImage(formData.image);
+          if (imageError) {
+            errors.image = imageError;
+          }
         }
         break;
+        
       case 1:
         if (!formData.prompt.trim()) {
-          setError('Please provide a story prompt');
-          return false;
+          errors.prompt = 'Please provide a story prompt';
+        } else if (formData.prompt.length > MAX_PROMPT_LENGTH) {
+          errors.prompt = `Prompt must be less than ${MAX_PROMPT_LENGTH} characters`;
         }
         break;
+        
       default:
         break;
     }
-    return true;
+
+    setValidationErrors(errors);
+    return Object.keys(errors).length === 0;
   };
 
   const handleNext = async () => {
@@ -82,17 +158,28 @@ const CreateStory = () => {
 
   const handleBack = () => {
     setActiveStep(prev => prev - 1);
+    setError('');
+    setValidationErrors({});
   };
 
   const generateStory = async () => {
     try {
       setLoading(true);
       setError('');
-      const result = await storyService.generateAIStory(formData.prompt);
+      
+      // Include genre and length in the prompt
+      const enhancedPrompt = `Generate a ${formData.length} ${formData.genre} story about: ${formData.prompt}`;
+      const result = await storyService.generateAIStory(enhancedPrompt);
+      
+      if (!result?.content) {
+        throw new Error('Failed to generate story content');
+      }
+      
       setGeneratedStory(result.content);
       setActiveStep(prev => prev + 1);
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Failed to generate story');
+      console.error('Story generation error:', err);
     } finally {
       setLoading(false);
     }
@@ -100,26 +187,52 @@ const CreateStory = () => {
 
   const handleSave = async () => {
     try {
+      if (!generatedStory) {
+        setError('No story content to save');
+        return;
+      }
+
       setLoading(true);
-      const newStory = await storyService.createStory({
-        title: formData.title,
-        genre: formData.genre,
-        content: generatedStory,
-        isAIGenerated: true
-      });
+      const formDataToSend = new FormData();
+      formDataToSend.append('title', formData.title);
+      formDataToSend.append('genre', formData.genre);
+      formDataToSend.append('content', generatedStory);
+      formDataToSend.append('isAIGenerated', 'true');
+      formDataToSend.append('length', formData.length);
+      if (formData.image) {
+        formDataToSend.append('image', formData.image);
+      }
+      
+      const newStory = await storyService.createStory(formDataToSend);
+      if (!newStory?._id) {
+        throw new Error('Failed to save story');
+      }
+      
       navigate(`/story/${newStory._id}`);
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Failed to save story');
+      console.error('Story save error:', err);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleRemoveImage = () => {
+    setFormData(prev => ({
+      ...prev,
+      image: null
+    }));
+    setValidationErrors(prev => ({
+      ...prev,
+      image: null
+    }));
   };
 
   const renderStepContent = () => {
     switch (activeStep) {
       case 0:
         return (
-          <>
+          <Stack spacing={3}>
             <TextField
               label="Story Title"
               name="title"
@@ -128,9 +241,64 @@ const CreateStory = () => {
               fullWidth
               required
               disabled={loading}
+              error={!!validationErrors.title}
+              helperText={validationErrors.title || `${formData.title.length}/${MAX_TITLE_LENGTH} characters`}
+              inputProps={{
+                maxLength: MAX_TITLE_LENGTH
+              }}
             />
 
-            <FormControl fullWidth required>
+            <Box>
+              <input
+                accept={ALLOWED_IMAGE_TYPES.join(',')}
+                style={{ display: 'none' }}
+                id="story-image"
+                type="file"
+                name="image"
+                onChange={handleInputChange}
+                disabled={loading}
+              />
+              <label htmlFor="story-image">
+                <Button
+                  variant="outlined"
+                  component="span"
+                  disabled={loading}
+                  fullWidth
+                >
+                  {formData.image ? 'Change Image' : 'Upload Image'}
+                </Button>
+              </label>
+              {formData.image && (
+                <Box sx={{ 
+                  mt: 1, 
+                  display: 'flex', 
+                  alignItems: 'center',
+                  justifyContent: 'space-between'
+                }}>
+                  <Typography variant="body2">
+                    Selected: {formData.image.name}
+                  </Typography>
+                  <IconButton 
+                    size="small" 
+                    onClick={handleRemoveImage}
+                    aria-label="remove image"
+                  >
+                    <CloseIcon />
+                  </IconButton>
+                </Box>
+              )}
+              {validationErrors.image && (
+                <Typography 
+                  color="error" 
+                  variant="caption" 
+                  sx={{ display: 'block', mt: 0.5 }}
+                >
+                  {validationErrors.image}
+                </Typography>
+              )}
+            </Box>
+
+            <FormControl fullWidth required error={!!validationErrors.genre}>
               <InputLabel>Genre</InputLabel>
               <Select
                 name="genre"
@@ -160,6 +328,11 @@ const CreateStory = () => {
                 <MenuItem value="supernatural">Supernatural</MenuItem>
                 <MenuItem value="psychological">Psychological</MenuItem>
               </Select>
+              {validationErrors.genre && (
+                <Typography color="error" variant="caption">
+                  {validationErrors.genre}
+                </Typography>
+              )}
             </FormControl>
 
             <FormControl fullWidth required>
@@ -176,8 +349,9 @@ const CreateStory = () => {
                 <MenuItem value="long">Long (~2000 words)</MenuItem>
               </Select>
             </FormControl>
-          </>
+          </Stack>
         );
+
       case 1:
         return (
           <TextField
@@ -190,14 +364,26 @@ const CreateStory = () => {
             fullWidth
             required
             disabled={loading}
+            error={!!validationErrors.prompt}
+            helperText={validationErrors.prompt || `${formData.prompt.length}/${MAX_PROMPT_LENGTH} characters`}
             placeholder="Describe your story idea or provide specific elements you want to include..."
+            inputProps={{
+              maxLength: MAX_PROMPT_LENGTH
+            }}
           />
         );
+
       case 2:
         return (
           <Paper 
             elevation={2} 
-            sx={{ p: 3, mt: 2, backgroundColor: 'white' }}
+            sx={{ 
+              p: 3, 
+              mt: 2, 
+              backgroundColor: 'white',
+              maxHeight: '60vh',
+              overflow: 'auto'
+            }}
           >
             <Typography 
               variant="h5" 
@@ -206,11 +392,21 @@ const CreateStory = () => {
             >
               {formData.title}
             </Typography>
+            <Typography 
+              variant="body2" 
+              color="text.secondary" 
+              gutterBottom
+            >
+              {formData.genre.charAt(0).toUpperCase() + formData.genre.slice(1)} • {
+                storyService.calculateReadingTime(generatedStory)
+              } min read
+            </Typography>
             <Typography sx={{ whiteSpace: 'pre-wrap' }}>
               {generatedStory}
             </Typography>
           </Paper>
         );
+
       default:
         return null;
     }

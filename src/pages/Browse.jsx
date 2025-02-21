@@ -38,6 +38,28 @@ const StoryCard = ({ story }) => {
         }
       }}
     >
+      {story.image && (
+        <Box 
+          sx={{ 
+            pt: '56.25%', // 16:9 aspect ratio
+            position: 'relative',
+            overflow: 'hidden'
+          }}
+        >
+          <img
+            src={story.image}
+            alt={story.title}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover'
+            }}
+          />
+        </Box>
+      )}
       <CardContent sx={{ p: { xs: 2, sm: 3 }, flexGrow: 1 }}>
         <Typography 
           variant="h5" 
